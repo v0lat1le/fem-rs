@@ -1,0 +1,8 @@
+[package]
+name = "fem-rs"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+ndarray = { version="0.14" }
+ndarray-linalg = { version="0.13" }
