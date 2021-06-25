@@ -1,15 +1,58 @@
 use fem_rs::integrate;
+use fem_rs::cell::Cell;
 use ndarray::{Array, Ix1, Ix2};
 use ndarray_linalg::Solve;
 
-fn to_global(order: usize, element: usize, dof: usize) -> usize {
-    return element * order + dof;
-}
 
 fn set_boundary_condition(index: usize, value: f64, K: &mut Array<f64, Ix2>, F: &mut Array<f64, Ix1>) {
     K.row_mut(index).fill(0.0);
     K[[index, index]] = 1.0;
     F[index] = value;
+}
+
+struct Cell1D {
+    pub order: usize,
+    pub dof0: usize,
+    pub x0: f64,
+    pub w: f64,
+}
+
+impl Cell for Cell1D {
+    type Coord = f64;
+
+    fn basis(&self, dof: usize, x: Self::Coord) -> f64 {
+        return fem_rs::lagrange(self.order, dof, x);
+    }
+
+    fn basis_gradient(&self, dof: usize, x: Self::Coord) -> Self::Coord {
+        return fem_rs::lagrange_gradient(self.order, dof, x);
+    }
+
+    fn global_coord(&self, x: Self::Coord) -> Self::Coord {
+        return self.x0 + 0.5*self.w*(x+1.0);
+    }
+
+    fn global_dof(&self, dof: usize) -> usize {
+        return self.dof0 + dof;
+    }
+
+    fn local_dofs(&self) -> usize {
+        return self.order+1;
+    }
+}
+
+impl Cell1D {
+    fn jacob(&self, _x: f64) -> f64 {
+        return 0.5*self.w;
+    }
+
+    fn jacob_det(&self, _x: f64) -> f64 {
+        return 0.5*self.w;
+    }
+
+    fn jacob_inv(&self, _x: f64) -> f64 {
+        return 2.0/self.w;
+    }
 }
 
 fn main() {
@@ -24,19 +67,23 @@ fn main() {
     let Nel = 10;
     let order = 3;
 
-    let he = L/Nel as f64;
-
     let mut K = Array::<f64, Ix2>::zeros((Nel*order+1, Nel*order+1));
     let mut F = Array::<f64, Ix1>::zeros(Nel*order+1);
 
     for element in 0..Nel {
-        for localA in 0..=order {
-            let globalA = to_global(order, element, localA);
-            F[globalA] += 0.5*A*he*integrate(|x| fem_rs::lagrange(order, localA, x) * f(he*(element as f64+0.5*(x+1.0))));
+        let cell = Cell1D {
+            order: order,
+            dof0: element * order,
+            x0: L/Nel as f64 * element as f64,
+            w: L/Nel as f64
+        };
+        for localA in 0..cell.local_dofs() {
+            let globalA = cell.global_dof(localA);
+            F[globalA] += A*integrate(|x| cell.basis(localA, x) * f(cell.global_coord(x)) * cell.jacob_det(x));
             
-            for localB in 0..=order {
-                let globalB = to_global(order, element, localB);
-                K[[globalA, globalB]] += 2.0*E*A/he*integrate(|x| fem_rs::lagrange_gradient(order, localA, x)*fem_rs::lagrange_gradient(order, localB, x));
+            for localB in  0..cell.local_dofs() {
+                let globalB = cell.global_dof(localB);
+                K[[globalA, globalB]] += E*A*integrate(|x| cell.basis_gradient(localA, x) * cell.jacob_inv(x) * cell.basis_gradient(localB, x) * cell.jacob_inv(x) * cell.jacob_det(x));
             }
         }
     }
