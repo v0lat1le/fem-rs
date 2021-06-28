@@ -1,9 +1,16 @@
+pub trait Node {
+    type Coord;
+    
+    fn index(&self) -> usize;
+    fn coord(&self) -> Self::Coord;
+    fn basis(&self, x: &Self::Coord) -> f64;
+    fn basis_grad(&self, x: &Self::Coord) -> Self::Coord;
+}
+
 pub trait Cell {
     type Coord;
+    type Jacob;
 
-    fn basis(&self, dof: usize, x: Self::Coord) -> f64;
-    fn basis_gradient(&self, dof: usize, x: Self::Coord) -> Self::Coord;
-    fn global_coord(&self, x: Self::Coord) -> Self::Coord;
-    fn global_dof(&self, dof: usize) -> usize;
-    fn local_dofs(&self) -> usize;
+    fn interp(&self, x: &Self::Coord) -> Self::Coord;
+    fn jacob(&self, x: &Self::Coord) -> Self::Jacob;
 }

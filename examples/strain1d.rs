@@ -1,13 +1,28 @@
 use fem_rs::integrate;
-use fem_rs::cell::Cell;
-use ndarray::{Array, Ix1, Ix2};
-use ndarray_linalg::Solve;
+use fem_rs::cell::{Node, Cell};
+use ndarray::{Array, Ix1, Ix2, aview2, aview_mut2};
+use ndarray_linalg::{Determinant, Inverse, Solve};
 
 
 fn set_boundary_condition(index: usize, value: f64, K: &mut Array<f64, Ix2>, F: &mut Array<f64, Ix1>) {
     K.row_mut(index).fill(0.0);
     K[[index, index]] = 1.0;
     F[index] = value;
+}
+
+struct Node1D {
+    pub order: usize,
+    pub index: usize,
+    pub global: usize,
+    pub coord: f64,
+}
+
+impl Node for Node1D {
+    type Coord = f64;
+    fn index(&self) -> usize { self.global }
+    fn coord(&self) -> Self::Coord { self.coord }
+    fn basis(&self, x: &Self::Coord) -> f64 { fem_rs::lagrange(self.order, self.index, *x) }
+    fn basis_grad(&self, x: &Self::Coord) -> Self::Coord  { fem_rs::lagrange_gradient(self.order, self.index, *x) }
 }
 
 struct Cell1D {
@@ -19,39 +34,25 @@ struct Cell1D {
 
 impl Cell for Cell1D {
     type Coord = f64;
+    type Jacob = [[f64; 1]; 1];
 
-    fn basis(&self, dof: usize, x: Self::Coord) -> f64 {
-        return fem_rs::lagrange(self.order, dof, x);
+    fn interp(&self, x: &Self::Coord) -> Self::Coord {
+        return self.nodes().map(|n| n.basis(x)*n.coord()).sum();
     }
 
-    fn basis_gradient(&self, dof: usize, x: Self::Coord) -> Self::Coord {
-        return fem_rs::lagrange_gradient(self.order, dof, x);
-    }
-
-    fn global_coord(&self, x: Self::Coord) -> Self::Coord {
-        return self.x0 + 0.5*self.w*(x+1.0);
-    }
-
-    fn global_dof(&self, dof: usize) -> usize {
-        return self.dof0 + dof;
-    }
-
-    fn local_dofs(&self) -> usize {
-        return self.order+1;
+    fn jacob(&self, x: &Self::Coord) -> Self::Jacob {
+        return [[self.nodes().map(|n| n.basis_grad(x)*n.coord()).sum()]];
     }
 }
 
 impl Cell1D {
-    fn jacob(&self, _x: f64) -> f64 {
-        return 0.5*self.w;
-    }
-
-    fn jacob_det(&self, _x: f64) -> f64 {
-        return 0.5*self.w;
-    }
-
-    fn jacob_inv(&self, _x: f64) -> f64 {
-        return 2.0/self.w;
+    fn nodes(&self) -> impl Iterator<Item=Node1D> + '_ {
+        return (0..=self.order).map(move |index| Node1D {
+            order: self.order,
+            index: index,
+            global: self.dof0 + index,
+            coord: self.x0 + self.w*index as f64/self.order as f64
+        });
     }
 }
 
@@ -77,13 +78,21 @@ fn main() {
             x0: L/Nel as f64 * element as f64,
             w: L/Nel as f64
         };
-        for localA in 0..cell.local_dofs() {
-            let globalA = cell.global_dof(localA);
-            F[globalA] += A*integrate(|x| cell.basis(localA, x) * f(cell.global_coord(x)) * cell.jacob_det(x));
+        for nodeA in cell.nodes() {
+            F[nodeA.index()] += A*integrate(|x| {
+                let jacob_data = cell.jacob(&x);
+                let jacob = aview2(&jacob_data);
+                return nodeA.basis(&x) * f(cell.interp(&x)) * jacob.det().unwrap();
+            });
             
-            for localB in  0..cell.local_dofs() {
-                let globalB = cell.global_dof(localB);
-                K[[globalA, globalB]] += E*A*integrate(|x| cell.basis_gradient(localA, x) * cell.jacob_inv(x) * cell.basis_gradient(localB, x) * cell.jacob_inv(x) * cell.jacob_det(x));
+            for nodeB in cell.nodes() {
+                K[[nodeA.index(), nodeB.index()]] += E*A*integrate(|x| {
+                    let mut jacob_data = cell.jacob(&x);
+                    let mut jacob = aview_mut2(&mut jacob_data);
+                    let jacob_det = jacob.det().unwrap();
+                    let jacob_inv = jacob.inv().unwrap();
+                    return nodeA.basis_grad(&x) * jacob_inv[[0,0]] * nodeB.basis_grad(&x) * jacob_inv[[0,0]] * jacob_det;
+                });
             }
         }
     }
