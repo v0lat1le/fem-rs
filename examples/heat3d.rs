@@ -3,7 +3,6 @@ use fem_rs::{integrate};
 use ndarray::{Array, Ix1, Ix2, aview1, aview_mut2};
 use ndarray_linalg::{Determinant, Inverse, Solve};
 use std::fs::File;
-use std::io::Write;
 
 fn set_boundary_condition(index: usize, value: f64, K: &mut Array<f64, Ix2>,  F: &mut Array<f64, Ix1>) {
     K.row_mut(index).fill(0.0);
@@ -97,112 +96,79 @@ impl Cell3D {
     }
 }
 
+fn make_node(index: usize, point: usize, dataset: &fem_rs::io::Dataset) -> Node3D {
+    Node3D {
+        order: 1,
+        index: index,
+        global: point,
+        coord: [dataset.points[point].x, dataset.points[point].y, dataset.points[point].z]
+    }
+}
+
+fn make_cell(index: usize, dataset: &fem_rs::io::Dataset) -> Cell3D {
+    let cell = &dataset.cells[index];
+    let nodes = [
+        make_node(0, cell.points[0], dataset),
+        make_node(1, cell.points[1], dataset),
+        make_node(2, cell.points[3], dataset),
+        make_node(3, cell.points[2], dataset),
+        make_node(4, cell.points[4], dataset),
+        make_node(5, cell.points[5], dataset),
+        make_node(6, cell.points[7], dataset),
+        make_node(7, cell.points[6], dataset),
+    ];
+    return Cell3D {
+        order: 1,
+        nodes: nodes
+    };
+}
+
 fn main() {
-    let order = 1;
-    let x_cells = 4;
-    let y_cells = 8;
-    let z_cells = 2;
-    let n_nodes = (x_cells*order+1)*(y_cells*order+1)*(z_cells*order+1);
+    let mut dataset = fem_rs::io::read_dataset(
+        &mut std::io::BufReader::new(File::open("data/heat3d.vtk").unwrap())).unwrap();
+    let n_dof = dataset.points.len();
     let kappa = Array::<f64, Ix2>::eye(3)*385.0f64;
     
-    let mut K = Array::<f64, Ix2>::zeros((n_nodes, n_nodes));
-    let mut F = Array::<f64, Ix1>::zeros(n_nodes);
+    let mut K = Array::<f64, Ix2>::zeros((n_dof, n_dof));
+    let mut F = Array::<f64, Ix1>::zeros(n_dof);
+    for cell in 0..dataset.cells.len() {
+        let cell = make_cell(cell, &dataset);
 
-    for cellx in 0..x_cells {
-        for celly in 0..y_cells {
-            for cellz in 0..z_cells {
-                let nodes = [
-                    Node3D{order: 1, index: 0, global: cellx + (x_cells+1)*(celly + cellz*(y_cells+1)), coord: [cellx as f64*0.01, celly as f64*0.01, cellz as f64*0.01]},
-                    Node3D{order: 1, index: 1, global: cellx+1 + (x_cells+1)*(celly + cellz*(y_cells+1)), coord: [(cellx+1) as f64*0.01, celly as f64*0.01, cellz as f64*0.01]},
-                    Node3D{order: 1, index: 2, global: cellx + (x_cells+1)*(celly+1 + cellz*(y_cells+1)), coord: [cellx as f64*0.01, (celly+1) as f64*0.01, cellz as f64*0.01]},
-                    Node3D{order: 1, index: 3, global: cellx+1 + (x_cells+1)*(celly+1 + cellz*(y_cells+1)), coord: [(cellx+1) as f64*0.01, (celly+1) as f64*0.01, cellz as f64*0.01]},
-                    Node3D{order: 1, index: 4, global: cellx + (x_cells+1)*(celly + (cellz+1)*(y_cells+1)), coord: [cellx as f64*0.01, celly as f64*0.01, (cellz+1) as f64*0.01]},
-                    Node3D{order: 1, index: 5, global: cellx+1 + (x_cells+1)*(celly + (cellz+1)*(y_cells+1)), coord: [(cellx+1) as f64*0.01, celly as f64*0.01, (cellz+1) as f64*0.01]},
-                    Node3D{order: 1, index: 6, global: cellx + (x_cells+1)*(celly+1 + (cellz+1)*(y_cells+1)), coord: [cellx as f64*0.01, (celly+1) as f64*0.01, (cellz+1) as f64*0.01]},
-                    Node3D{order: 1, index: 7, global: cellx+1 + (x_cells+1)*(celly+1 + (cellz+1)*(y_cells+1)), coord: [(cellx+1) as f64*0.01, (celly+1) as f64*0.01, (cellz+1) as f64*0.01]},
-                ];
-                let cell = Cell3D {
-                    order: 1,
-                    nodes: nodes
-                };
-
-                for nodeA in cell.nodes() {
-                    // F[nodeA.index()] += A*integrate(|x| {
-                    //     let jacob_data = cell.jacob(&x);
-                    //     let jacob = aview2(&jacob_data);
-                    //     return nodeA.basis(&x) * f(cell.interp(&x)) * jacob.det().unwrap();
-                    // });
-                    
-                    for nodeB in cell.nodes() {
-                        K[[nodeA.index(), nodeB.index()]] += integrate(|x0| integrate(|x1| integrate(|x2| {
-                            let x = [x0, x1, x2];
-                            let mut jacob_data = cell.jacob(&x);
-                            let jacob = aview_mut2(&mut jacob_data);
-                            let jacob_det = jacob.det().unwrap();
-                            let jacob_inv = jacob.inv().unwrap();
-                            return aview1(&nodeA.basis_grad(&x)).dot(&jacob_inv).dot(&kappa).dot(&aview1(&nodeB.basis_grad(&x)).dot(&jacob_inv)) * jacob_det;
-                        })));
-                    }
-                }
+        for node_a in cell.nodes() {
+            // F[nodeA.index()] += A*integrate(|x| {
+            //     let jacob_data = cell.jacob(&x);
+            //     let jacob = aview2(&jacob_data);
+            //     return nodeA.basis(&x) * f(cell.interp(&x)) * jacob.det().unwrap();
+            // });
+            
+            for node_b in cell.nodes() {
+                K[[node_a.index(), node_b.index()]] += integrate(|x0| integrate(|x1| integrate(|x2| {
+                    let x = [x0, x1, x2];
+                    let mut jacob_data = cell.jacob(&x);
+                    let jacob = aview_mut2(&mut jacob_data);
+                    let jacob_det = jacob.det().unwrap();
+                    let jacob_inv = jacob.inv().unwrap();
+                    return aview1(&node_a.basis_grad(&x)).dot(&jacob_inv).dot(&kappa).dot(&aview1(&node_b.basis_grad(&x)).dot(&jacob_inv)) * jacob_det;
+                })));
             }
         }
     }
 
-    
-    for nodey in 0..=y_cells {
-        let y = nodey as f64*0.01;
-        for nodez in 0..=z_cells {
-            let z = nodez as f64*0.01;
-            let left = (x_cells+1)*(nodey + nodez*(y_cells+1));
-            let right = x_cells + (x_cells+1)*(nodey + nodez*(y_cells+1));
-            set_boundary_condition(left, 300.0*(1.0 + (y+z)/3.0), &mut K, &mut F);
-            set_boundary_condition(right, 310.0*(1.0 + (y+z)/3.0), &mut K, &mut F);
+    for (index, point) in dataset.points.iter().enumerate() {
+        if point.x == 0.0 {
+            set_boundary_condition(index, 300.0*(1.0 + (point.y+point.z)/3.0), &mut K, &mut F);
+        } else if point.x == 0.04 {
+            set_boundary_condition(index, 310.0*(1.0 + (point.y+point.z)/3.0), &mut K, &mut F);
         }
     }
 
     let D = K.solve(&F).unwrap();
 
-    let mut file = File::create("solution.vtk").unwrap();
-    writeln!(file, "# vtk DataFile Version 3.0");
-    writeln!(file, "# This file was generated by the fem-rs library");
-    writeln!(file, "ASCII");
-    writeln!(file, "DATASET UNSTRUCTURED_GRID");
-    writeln!(file, "POINTS {} double", n_nodes);
-    for nodez in 0..=z_cells {
-        for nodey in 0..=y_cells {
-            for nodex in 0..=x_cells {
-                writeln!(file, "{} {} {}", nodex as f64*0.01, nodey as f64*0.01, nodez as f64*0.01);
-            }
-        }
-    }
-    writeln!(file, "CELLS {} {}", x_cells*y_cells*z_cells, x_cells*y_cells*z_cells*9);
-    for cellz in 0..z_cells {
-        for celly in 0..y_cells {
-            for cellx in 0..x_cells {
-                writeln!(file, "8 {} {} {} {} {} {} {} {}", 
-                cellx + (x_cells+1)*(celly + cellz*(y_cells+1)),
-                cellx+1 + (x_cells+1)*(celly + cellz*(y_cells+1)),
-                cellx+1 + (x_cells+1)*(celly+1 + cellz*(y_cells+1)),
-                cellx + (x_cells+1)*(celly+1 + cellz*(y_cells+1)),
-                cellx + (x_cells+1)*(celly + (cellz+1)*(y_cells+1)),
-                cellx+1 + (x_cells+1)*(celly + (cellz+1)*(y_cells+1)),
-                cellx+1 + (x_cells+1)*(celly+1 + (cellz+1)*(y_cells+1)),
-                cellx + (x_cells+1)*(celly+1 + (cellz+1)*(y_cells+1)));
-            }
-        }
-    }
-    writeln!(file, "CELL_TYPES {}", x_cells*y_cells*z_cells);
-    writeln!(file, "{}", "12 ".repeat(x_cells*y_cells*z_cells));
-
-    writeln!(file, "POINT_DATA {}", n_nodes);
-    writeln!(file, "SCALARS D double 1");
-    writeln!(file, "LOOKUP_TABLE default");
-    for v in D.iter() {
-        write!(file, "{} ", v);
-    }
-    writeln!(file, "");
-
     println!("{:?}", K);
     println!("{:?}", F);
     println!("{:?}", D);
+
+    dataset.point_data.insert("D".to_owned(), fem_rs::io::Attributes::Scalar(D.into_raw_vec()));
+    let mut file = File::create("solution.vtk").unwrap();
+    fem_rs::io::write_dataset(&mut file, &dataset).unwrap();
 }
