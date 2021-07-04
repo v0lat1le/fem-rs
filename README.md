@@ -4,3 +4,5 @@
 `cargo run --example strain1d --features ndarray-linalg/intel-mkl-static`
 
 `cargo run --example heat3d --features ndarray-linalg/intel-mkl-static`
+
+`cargo run --example strain3d --features ndarray-linalg/intel-mkl-static`

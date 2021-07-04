@@ -246,7 +246,12 @@ pub fn write_dataset(file: &mut dyn Write, dataset: &Dataset) -> Result<()> {
                     }
                     writeln!(file)?;
                 },
-                Attributes::Vector(_data) => {}
+                Attributes::Vector(data) => {
+                    writeln!(file, "VECTORS {} double", name)?;
+                    for point in data {
+                        writeln!(file, "{} {} {}", point.x, point.y, point.z)?;
+                    }
+                }
             }
         }
     }
